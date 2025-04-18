@@ -17,10 +17,11 @@ import (
 )
 
 type mysqlStmt struct {
-	mc         *mysqlConn
-	id         uint32
-	paramCount int
-	columns    []mysqlField
+	mc           *mysqlConn
+	id           uint32
+	paramCount   int
+	columns      []mysqlField
+	initialQuery string
 }
 
 func (stmt *mysqlStmt) Close() error {
@@ -52,16 +53,53 @@ func (stmt *mysqlStmt) CheckNamedValue(nv *driver.NamedValue) (err error) {
 }
 
 func (stmt *mysqlStmt) Exec(args []driver.Value) (driver.Result, error) {
-	if stmt.mc.closed.Load() {
+	mc := stmt.mc
+	if mc.closed.Load() {
 		return nil, driver.ErrBadConn
 	}
+
+	var prepareSequence uint8
+	var prepareCompressSequence uint8
+
+	if mc.clientExtCapabilities&clientStmtBulkOperations != 0 {
+		// Send command
+		err := mc.writeCommandPacketStr(comStmtPrepare, stmt.initialQuery)
+		if err != nil {
+			mc.log(err)
+			return nil, driver.ErrBadConn
+		}
+		prepareSequence = mc.sequence
+		prepareCompressSequence = mc.compressSequence
+	}
+
 	// Send command
 	err := stmt.writeExecutePacket(args)
 	if err != nil {
 		return nil, stmt.mc.markBadConn(err)
 	}
 
-	mc := stmt.mc
+	if stmt.mc.clientExtCapabilities&clientStmtBulkOperations != 0 {
+		// Read Prepare Result
+		var executeSequence uint8
+		var executeCompressSequence uint8
+		executeSequence = mc.sequence
+		executeCompressSequence = mc.compressSequence
+
+		mc.sequence = prepareSequence
+		mc.compressSequence = prepareCompressSequence
+
+		err = mc.readPrepareResult(stmt)
+
+		mc.sequence = executeSequence
+		mc.compressSequence = executeCompressSequence
+		if err != nil {
+			// skip executeResult (will return an error)
+			handleOk := stmt.mc.clearResult()
+			_, _, _ = handleOk.readResultSetHeaderPacket()
+			return nil, err
+		}
+	}
+
 	handleOk := stmt.mc.clearResult()
 
 	// Read Result
@@ -98,13 +136,48 @@ func (stmt *mysqlStmt) query(args []driver.Value) (*binaryRows, error) {
 	if stmt.mc.closed.Load() {
 		return nil, driver.ErrBadConn
 	}
+
+	mc := stmt.mc
+	var prepareSequence uint8
+	var prepareCompressSequence uint8
+
+	if mc.clientExtCapabilities&clientStmtBulkOperations != 0 {
+		// Send command
+		err := mc.writeCommandPacketStr(comStmtPrepare, stmt.initialQuery)
+		if err != nil {
+			mc.log(err)
+			return nil, driver.ErrBadConn
+		}
+		prepareSequence = mc.sequence
+		prepareCompressSequence = mc.compressSequence
+	}
 	// Send command
 	err := stmt.writeExecutePacket(args)
 	if err != nil {
 		return nil, stmt.mc.markBadConn(err)
 	}
 
-	mc := stmt.mc
+	if stmt.mc.clientExtCapabilities&clientStmtBulkOperations != 0 {
+		// Read Prepare Result
+		var executeSequence uint8
+		var executeCompressSequence uint8
+		executeSequence = mc.sequence
+		executeCompressSequence = mc.compressSequence
+
+		mc.sequence = prepareSequence
+		mc.compressSequence = prepareCompressSequence
+
+		err = mc.readPrepareResult(stmt)
+
+		mc.sequence = executeSequence
+		mc.compressSequence = executeCompressSequence
+		if err != nil {
+			// skip executeResult (will return an error)
+			handleOk := stmt.mc.clearResult()
+			_, _, _ = handleOk.readResultSetHeaderPacket()
+			return nil, err
+		}
+	}
 
 	// Read Result
 	handleOk := stmt.mc.clearResult()

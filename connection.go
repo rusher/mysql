@@ -208,6 +208,17 @@ func (mc *mysqlConn) Prepare(query string) (driver.Stmt, error) {
 	if mc.closed.Load() {
 		return nil, driver.ErrBadConn
 	}
+	if mc.clientExtCapabilities&clientStmtBulkOperations != 0 {
+		// can delay PREPARE
+		stmt := &mysqlStmt{
+			mc:           mc,
+			id:           0xffffffff,
+			paramCount:   -1,
+			initialQuery: query,
+		}
+		return stmt, nil
+	}
+
 	// Send command
 	err := mc.writeCommandPacketStr(comStmtPrepare, query)
 	if err != nil {
@@ -221,28 +232,32 @@ func (mc *mysqlConn) Prepare(query string) (driver.Stmt, error) {
 	}
 
 	// Read Result
+	err = mc.readPrepareResult(stmt)
+	return stmt, err
+}
+
+func (mc *mysqlConn) readPrepareResult(stmt *mysqlStmt) error {
 	columnCount, err := stmt.readPrepareResultPacket()
 	if err == nil {
 		if stmt.paramCount > 0 {
 			if err = mc.skipColumns(stmt.paramCount); err != nil {
-				return nil, err
+				return err
 			}
 		}
 
 		if columnCount > 0 {
 			if mc.clientExtCapabilities&clientCacheMetadata != 0 {
 				if stmt.columns, err = mc.readColumns(int(columnCount)); err != nil {
-					return nil, err
+					return err
 				}
 			} else {
 				if err = mc.skipColumns(int(columnCount)); err != nil {
-					return nil, err
+					return err
 				}
 			}
 		}
 	}
-
-	return stmt, err
+	return err
 }
 
 func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (string, error) {
@@ -256,7 +271,7 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 		// can not take the buffer. Something must be wrong with the connection
 		mc.cleanup()
 		// interpolateParams would be called before sending any query.
-		// So its safe to retry.
+		// So it's safe to retry.
 		return "", driver.ErrBadConn
 	}
 	buf = buf[:0]

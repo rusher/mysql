@@ -310,7 +310,7 @@ func (mc *mysqlConn) initClientCapabilities(serverCapabilities capabilityFlag, c
 func (mc *mysqlConn) writeHandshakeResponsePacket(authResp []byte, serverCapabilities capabilityFlag, serverExtendedCapabilities extendedCapabilityFlag, plugin string) error {
 	// Adjust client flags based on server support
 	mc.clientCapabilities = mc.initClientCapabilities(serverCapabilities, mc.cfg)
-	mc.clientExtCapabilities = clientCacheMetadata & serverExtendedCapabilities
+	mc.clientExtCapabilities = (clientCacheMetadata | clientStmtBulkOperations) & serverExtendedCapabilities
 
 	sendConnectAttrs := mc.clientCapabilities&clientConnectAttrs != 0
 
@@ -1016,7 +1016,7 @@ func (stmt *mysqlStmt) writeCommandLongData(paramID int, arg []byte) error {
 // Execute Prepared Statement
 // http://dev.mysql.com/doc/internals/en/com-stmt-execute.html
 func (stmt *mysqlStmt) writeExecutePacket(args []driver.Value) error {
-	if len(args) != stmt.paramCount {
+	if stmt.paramCount != -1 && len(args) != stmt.paramCount {
 		return fmt.Errorf(
 			"argument count mismatch (got: %d; has: %d)",
 			len(args),
@@ -1028,7 +1028,7 @@ func (stmt *mysqlStmt) writeExecutePacket(args []driver.Value) error {
 	mc := stmt.mc
 
 	// Determine threshold dynamically to avoid packet size shortage.
-	longDataSize := mc.maxAllowedPacket / (stmt.paramCount + 1)
+	longDataSize := mc.maxAllowedPacket / (len(args) + 1)
 	if longDataSize < 64 {
 		longDataSize = 64
 	}
@@ -1066,7 +1066,7 @@ func (stmt *mysqlStmt) writeExecutePacket(args []driver.Value) error {
 
 		var nullMask []byte
 		if maskLen, typesLen := (len(args)+7)/8, 1+2*len(args); pos+maskLen+typesLen >= cap(data) {
-			// buffer has to be extended but we don't know by how much so
+			// buffer has to be extended, but we don't know by how much so
 			// we depend on append after all data with known sizes fit.
 			// We stop at that because we deal with a lot of columns here
 			// which makes the required allocation size hard to guess.
@@ -1118,7 +1118,7 @@ func (stmt *mysqlStmt) writeExecutePacket(args []driver.Value) error {
 			case uint64:
 				paramTypes[i+i] = byte(fieldTypeLongLong)
 				paramTypes[i+i+1] = 0x80 // type is unsigned
-				paramValues = binary.LittleEndian.AppendUint64(paramValues, uint64(v))
+				paramValues = binary.LittleEndian.AppendUint64(paramValues, v)
 
 			case float64:
 				paramTypes[i+i] = byte(fieldTypeDouble)
