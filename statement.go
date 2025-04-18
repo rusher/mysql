@@ -61,7 +61,7 @@ func (stmt *mysqlStmt) Exec(args []driver.Value) (driver.Result, error) {
 	var prepareSequence uint8
 	var prepareCompressSequence uint8
 
-	if mc.clientExtCapabilities&clientStmtBulkOperations != 0 {
+	if mc.clientExtCapabilities&clientStmtBulkOperations != 0 && stmt.id == 0xffffffff {
 		// Send command
 		err := mc.writeCommandPacketStr(comStmtPrepare, stmt.initialQuery)
 		if err != nil {
@@ -78,7 +78,7 @@ func (stmt *mysqlStmt) Exec(args []driver.Value) (driver.Result, error) {
 		return nil, stmt.mc.markBadConn(err)
 	}
 
-	if stmt.mc.clientExtCapabilities&clientStmtBulkOperations != 0 {
+	if stmt.mc.clientExtCapabilities&clientStmtBulkOperations != 0 && stmt.id == 0xffffffff {
 		// Read Prepare Result
 		var executeSequence uint8
 		var executeCompressSequence uint8
@@ -141,7 +141,7 @@ func (stmt *mysqlStmt) query(args []driver.Value) (*binaryRows, error) {
 	var prepareSequence uint8
 	var prepareCompressSequence uint8
 
-	if mc.clientExtCapabilities&clientStmtBulkOperations != 0 {
+	if mc.clientExtCapabilities&clientStmtBulkOperations != 0 && stmt.id == 0xffffffff {
 		// Send command
 		err := mc.writeCommandPacketStr(comStmtPrepare, stmt.initialQuery)
 		if err != nil {
@@ -157,7 +157,7 @@ func (stmt *mysqlStmt) query(args []driver.Value) (*binaryRows, error) {
 		return nil, stmt.mc.markBadConn(err)
 	}
 
-	if stmt.mc.clientExtCapabilities&clientStmtBulkOperations != 0 {
+	if stmt.mc.clientExtCapabilities&clientStmtBulkOperations != 0 && stmt.id == 0xffffffff {
 		// Read Prepare Result
 		var executeSequence uint8
 		var executeCompressSequence uint8
