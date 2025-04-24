@@ -25,14 +25,30 @@ import (
 // https://dev.mysql.com/doc/dev/mysql-server/latest/PAGE_PROTOCOL.html
 // https://mariadb.com/kb/en/clientserver-protocol/
 
+// read n bytes from mc.buf
+func (mc *mysqlConn) readNext(n int) ([]byte, error) {
+	if mc.buf.len() < n {
+		err := mc.buf.fill(n, mc.readWithTimeout)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return mc.buf.readNext(n), nil
+}
+
 // Read packet to buffer 'data'
 func (mc *mysqlConn) readPacket() ([]byte, error) {
 	var prevData []byte
 	invalidSequence := false
 
+	readNext := mc.readNext
+	if mc.compress {
+		readNext = mc.compIO.readNext
+	}
+
 	for {
 		// read packet header
-		data, err := mc.readNextFunc(4, mc.readFunc)
+		data, err := readNext(4)
 		if err != nil {
 			mc.close()
 			if cerr := mc.canceled.Value(); cerr != nil {
@@ -80,7 +96,7 @@ func (mc *mysqlConn) readPacket() ([]byte, error) {
 		}
 
 		// read packet body [pktLen bytes]
-		data, err = mc.readNextFunc(pktLen, mc.readFunc)
+		data, err = readNext(pktLen)
 		if err != nil {
 			mc.close()
 			if cerr := mc.canceled.Value(); cerr != nil {
