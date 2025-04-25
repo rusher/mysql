@@ -27,8 +27,6 @@ func TestInterpolateParams(t *testing.T) {
 		cfg: &Config{
 			InterpolateParams: true,
 		},
-		readNextFunc: buf.readNext,
-		readFunc:     nc.Read,
 	}
 
 	q, err := mc.interpolateParams("SELECT ?+?", []driver.Value{int64(42), "gopher"})

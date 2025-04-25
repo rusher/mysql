@@ -40,8 +40,6 @@ type mysqlConn struct {
 	compressSequence      uint8
 	parseTime             bool
 	compress              bool
-	readFunc              func([]byte) (int, error)
-	readNextFunc          func(int, readerFunc) ([]byte, error)
 
 	// for context support (Go 1.8+)
 	watching bool
@@ -65,6 +63,16 @@ func (mc *mysqlConn) log(v ...any) {
 	}
 
 	mc.cfg.Logger.Print(v...)
+}
+
+func (mc *mysqlConn) readWithTimeout(b []byte) (int, error) {
+	to := mc.cfg.ReadTimeout
+	if to > 0 {
+		if err := mc.netConn.SetReadDeadline(time.Now().Add(to)); err != nil {
+			return 0, err
+		}
+	}
+	return mc.netConn.Read(b)
 }
 
 func (mc *mysqlConn) writeWithTimeout(b []byte) (int, error) {

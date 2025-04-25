@@ -106,8 +106,6 @@ func newRWMockConn(sequence uint8) (*mockConn, *mysqlConn) {
 		closech:          make(chan struct{}),
 		maxAllowedPacket: defaultMaxAllowedPacket,
 		sequence:         sequence,
-		readNextFunc:     buf.readNext,
-		readFunc:         conn.Read,
 	}
 	return conn, mc
 }
@@ -116,11 +114,9 @@ func TestReadPacketSingleByte(t *testing.T) {
 	conn := new(mockConn)
 	buf := newBuffer()
 	mc := &mysqlConn{
-		netConn:      conn,
-		buf:          buf,
-		cfg:          NewConfig(),
-		readNextFunc: buf.readNext,
-		readFunc:     conn.Read,
+		netConn: conn,
+		buf:     buf,
+		cfg:     NewConfig(),
 	}
 
 	conn.data = []byte{0x01, 0x00, 0x00, 0x00, 0xff}
@@ -173,11 +169,9 @@ func TestReadPacketSplit(t *testing.T) {
 	conn := new(mockConn)
 	buf := newBuffer()
 	mc := &mysqlConn{
-		netConn:      conn,
-		buf:          buf,
-		cfg:          NewConfig(),
-		readNextFunc: buf.readNext,
-		readFunc:     conn.Read,
+		netConn: conn,
+		buf:     buf,
+		cfg:     NewConfig(),
 	}
 
 	data := make([]byte, maxPacketSize*2+4*3)
@@ -283,12 +277,10 @@ func TestReadPacketFail(t *testing.T) {
 	conn := new(mockConn)
 	buf := newBuffer()
 	mc := &mysqlConn{
-		netConn:      conn,
-		buf:          buf,
-		closech:      make(chan struct{}),
-		cfg:          NewConfig(),
-		readNextFunc: buf.readNext,
-		readFunc:     conn.Read,
+		netConn: conn,
+		buf:     buf,
+		closech: make(chan struct{}),
+		cfg:     NewConfig(),
 	}
 
 	// illegal empty (stand-alone) packet
@@ -331,13 +323,11 @@ func TestRegression801(t *testing.T) {
 	conn := new(mockConn)
 	buf := newBuffer()
 	mc := &mysqlConn{
-		netConn:      conn,
-		buf:          buf,
-		cfg:          new(Config),
-		sequence:     42,
-		closech:      make(chan struct{}),
-		readNextFunc: buf.readNext,
-		readFunc:     conn.Read,
+		netConn:  conn,
+		buf:      buf,
+		cfg:      new(Config),
+		sequence: 42,
+		closech:  make(chan struct{}),
 	}
 
 	conn.data = []byte{72, 0, 0, 42, 10, 53, 46, 53, 46, 56, 0, 165, 0, 0, 0,

@@ -40,8 +40,6 @@ func uncompressHelper(t *testing.T, mc *mysqlConn, compressedPacket []byte) []by
 	conn := new(mockConn)
 	conn.data = compressedPacket
 	mc.netConn = conn
-	mc.readNextFunc = mc.compIO.readNext
-	mc.readFunc = conn.Read
 
 	uncompressedPacket, err := mc.readPacket()
 	if err != nil {

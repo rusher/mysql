@@ -401,7 +401,6 @@ func (mc *mysqlConn) writeHandshakeResponsePacket(authResp []byte, serverCapabil
 			return err
 		}
 		mc.netConn = tlsConn
-		mc.readFunc = mc.netConn.Read
 	}
 
 	// User [null terminated string]
