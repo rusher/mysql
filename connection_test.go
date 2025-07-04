@@ -212,6 +212,10 @@ func TestInterpolateParamsWithComments(t *testing.T) {
 		{"SELECT '?', ?", []driver.Value{int64(42)}, "SELECT '?', 42", false},
 		// ? in backtick identifier should not be replaced
 		{"SELECT `?`, ?", []driver.Value{int64(42)}, "SELECT `?`, 42", false},
+		// ? in backslash-escaped string literal should not be replaced
+		{"SELECT 'C:\\path\\?x.txt', ?", []driver.Value{int64(42)}, "SELECT 'C:\\path\\?x.txt', 42", false},
+		// ? in backslash-escaped string literal should not be replaced
+		{"SELECT '\\'?', col FROM tbl WHERE id = ? AND desc = 'foo\\'bar?'", []driver.Value{int64(42)}, "SELECT '\\'?', col FROM tbl WHERE id = 42 AND desc = 'foo\\'bar?'", false},
 		// Multiple comments and real placeholders
 		{"SELECT ? -- comment ?\n, ? /* ? */ , ? # ?\n, ?", []driver.Value{int64(1), int64(2), int64(3)}, "SELECT 1 -- comment ?\n, 2 /* ? */ , 3 # ?\n, ?", true},
 	}
