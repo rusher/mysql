@@ -172,7 +172,7 @@ func (mc *mysqlConn) close() {
 }
 
 // Closes the network connection and unsets internal variables. Do not call this
-// function after successfully authentication, call Close instead. This function
+// function after successful authentication, call Close instead. This function
 // is called before auth or on auth failure because MySQL will have already
 // closed the network connection.
 func (mc *mysqlConn) cleanup() {
@@ -245,9 +245,105 @@ func (mc *mysqlConn) Prepare(query string) (driver.Stmt, error) {
 	return stmt, err
 }
 
+// findParamPositions returns the positions of real parameter holders ('?') in the query, ignoring those in comments, strings, or backticks.
+func findParamPositions(query string, noBackslashEscapes bool) []int {
+	const (
+		stateNormal = iota
+		stateString
+		stateEscape
+		stateEOLComment
+		stateSlashStarComment
+		stateBacktick
+	)
+
+	var (
+		QUOTE_BYTE         = byte('\'')
+		DBL_QUOTE_BYTE     = byte('"')
+		BACKSLASH_BYTE     = byte('\\')
+		QUESTION_MARK_BYTE = byte('?')
+		SLASH_BYTE         = byte('/')
+		STAR_BYTE          = byte('*')
+		HASH_BYTE          = byte('#')
+		MINUS_BYTE         = byte('-')
+		LINE_FEED_BYTE     = byte('\n')
+		RADICAL_BYTE       = byte('`')
+	)
+
+	paramPositions := make([]int, 0)
+	state := stateNormal
+	singleQuotes := false
+	lastChar := byte(0)
+	lenq := len(query)
+	for i := 0; i < lenq; i++ {
+		currentChar := query[i]
+		if state == stateEscape && !((currentChar == QUOTE_BYTE && singleQuotes) || (currentChar == DBL_QUOTE_BYTE && !singleQuotes)) {
+			state = stateString
+			lastChar = currentChar
+			continue
+		}
+		switch currentChar {
+		case STAR_BYTE:
+			if state == stateNormal && lastChar == SLASH_BYTE {
+				state = stateSlashStarComment
+			}
+		case SLASH_BYTE:
+			if state == stateSlashStarComment && lastChar == STAR_BYTE {
+				state = stateNormal
+			}
+		case HASH_BYTE:
+			if state == stateNormal {
+				state = stateEOLComment
+			}
+		case MINUS_BYTE:
+			if state == stateNormal && lastChar == MINUS_BYTE {
+				state = stateEOLComment
+			}
+		case LINE_FEED_BYTE:
+			if state == stateEOLComment {
+				state = stateNormal
+			}
+		case DBL_QUOTE_BYTE:
+			if state == stateNormal {
+				state = stateString
+				singleQuotes = false
+			} else if state == stateString && !singleQuotes {
+				state = stateNormal
+			} else if state == stateEscape {
+				state = stateString
+			}
+		case QUOTE_BYTE:
+			if state == stateNormal {
+				state = stateString
+				singleQuotes = true
+			} else if state == stateString && singleQuotes {
+				state = stateNormal
+			} else if state == stateEscape {
+				state = stateString
+			}
+		case BACKSLASH_BYTE:
+			if state == stateString && !noBackslashEscapes {
+				state = stateEscape
+			}
+		case QUESTION_MARK_BYTE:
+			if state == stateNormal {
+				paramPositions = append(paramPositions, i)
+			}
+		case RADICAL_BYTE:
+			if state == stateBacktick {
+				state = stateNormal
+			} else if state == stateNormal {
+				state = stateBacktick
+			}
+		}
+		lastChar = currentChar
+	}
+	return paramPositions
+}
+
 func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (string, error) {
-	// Number of ? should be same to len(args)
-	if strings.Count(query, "?") != len(args) {
+	noBackslashEscapes := (mc.status & statusNoBackslashEscapes) != 0
+	paramPositions := findParamPositions(query, noBackslashEscapes)
+	if len(paramPositions) != len(args) {
 		return "", driver.ErrSkip
 	}
 
@@ -261,21 +357,16 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 	}
 	buf = buf[:0]
 	argPos := 0
+	lastIdx := 0
 
-	for i := 0; i < len(query); i++ {
-		q := strings.IndexByte(query[i:], '?')
-		if q == -1 {
-			buf = append(buf, query[i:]...)
-			break
-		}
-		buf = append(buf, query[i:i+q]...)
-		i += q
-
+	for _, qmIdx := range paramPositions {
+		buf = append(buf, query[lastIdx:qmIdx]...)
 		arg := args[argPos]
 		argPos++
 
 		if arg == nil {
 			buf = append(buf, "NULL"...)
+			lastIdx = qmIdx + 1
 			continue
 		}
 
@@ -306,10 +397,10 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 			}
 		case json.RawMessage:
 			buf = append(buf, '\'')
-			if mc.status&statusNoBackslashEscapes == 0 {
-				buf = escapeBytesBackslash(buf, v)
-			} else {
+			if noBackslashEscapes {
 				buf = escapeBytesQuotes(buf, v)
+			} else {
+				buf = escapeBytesBackslash(buf, v)
 			}
 			buf = append(buf, '\'')
 		case []byte:
@@ -317,19 +408,19 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 				buf = append(buf, "NULL"...)
 			} else {
 				buf = append(buf, "_binary'"...)
-				if mc.status&statusNoBackslashEscapes == 0 {
-					buf = escapeBytesBackslash(buf, v)
-				} else {
+				if noBackslashEscapes {
 					buf = escapeBytesQuotes(buf, v)
+				} else {
+					buf = escapeBytesBackslash(buf, v)
 				}
 				buf = append(buf, '\'')
 			}
 		case string:
 			buf = append(buf, '\'')
-			if mc.status&statusNoBackslashEscapes == 0 {
-				buf = escapeStringBackslash(buf, v)
-			} else {
+			if noBackslashEscapes {
 				buf = escapeStringQuotes(buf, v)
+			} else {
+				buf = escapeStringBackslash(buf, v)
 			}
 			buf = append(buf, '\'')
 		default:
@@ -339,7 +430,9 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 		if len(buf)+4 > mc.maxAllowedPacket {
 			return "", driver.ErrSkip
 		}
+		lastIdx = qmIdx + 1
 	}
+	buf = append(buf, query[lastIdx:]...)
 	if argPos != len(args) {
 		return "", driver.ErrSkip
 	}
