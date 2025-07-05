@@ -245,8 +245,8 @@ func (mc *mysqlConn) Prepare(query string) (driver.Stmt, error) {
 	return stmt, err
 }
 
-// findParamPositions returns the positions of real parameter holders ('?') in the query, ignoring those in comments, strings, or backticks.
-func findParamPositions(query string, noBackslashEscapes bool) []int {
+func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (string, error) {
+	noBackslashEscapes := (mc.status & statusNoBackslashEscapes) != 0
 	const (
 		stateNormal = iota
 		stateString
@@ -269,11 +269,19 @@ func findParamPositions(query string, noBackslashEscapes bool) []int {
 		RADICAL_BYTE       = byte('`')
 	)
 
-	paramPositions := make([]int, 0)
+	buf, err := mc.buf.takeCompleteBuffer()
+	if err != nil {
+		mc.cleanup()
+		return "", driver.ErrBadConn
+	}
+	buf = buf[:0]
 	state := stateNormal
 	singleQuotes := false
 	lastChar := byte(0)
+	argPos := 0
 	lenq := len(query)
+	lastIdx := 0
+
 	for i := 0; i < lenq; i++ {
 		currentChar := query[i]
 		if state == stateEscape && !((currentChar == QUOTE_BYTE && singleQuotes) || (currentChar == DBL_QUOTE_BYTE && !singleQuotes)) {
@@ -326,7 +334,79 @@ func findParamPositions(query string, noBackslashEscapes bool) []int {
 			}
 		case QUESTION_MARK_BYTE:
 			if state == stateNormal {
-				paramPositions = append(paramPositions, i)
+				if argPos >= len(args) {
+					return "", driver.ErrSkip
+				}
+				buf = append(buf, query[lastIdx:i]...)
+				arg := args[argPos]
+				argPos++
+
+				if arg == nil {
+					buf = append(buf, "NULL"...)
+					lastIdx = i + 1
+					break
+				}
+
+				switch v := arg.(type) {
+				case int64:
+					buf = strconv.AppendInt(buf, v, 10)
+				case uint64:
+					buf = strconv.AppendUint(buf, v, 10)
+				case float64:
+					buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
+				case bool:
+					if v {
+						buf = append(buf, '1')
+					} else {
+						buf = append(buf, '0')
+					}
+				case time.Time:
+					if v.IsZero() {
+						buf = append(buf, "'0000-00-00'"...)
+					} else {
+						buf = append(buf, '\'')
+						buf, err = appendDateTime(buf, v.In(mc.cfg.Loc), mc.cfg.timeTruncate)
+						if err != nil {
+							return "", err
+						}
+						buf = append(buf, '\'')
+					}
+				case json.RawMessage:
+					buf = append(buf, '\'')
+					if noBackslashEscapes {
+						buf = escapeBytesQuotes(buf, v)
+					} else {
+						buf = escapeBytesBackslash(buf, v)
+					}
+					buf = append(buf, '\'')
+				case []byte:
+					if v == nil {
+						buf = append(buf, "NULL"...)
+					} else {
+						buf = append(buf, "_binary'"...)
+						if noBackslashEscapes {
+							buf = escapeBytesQuotes(buf, v)
+						} else {
+							buf = escapeBytesBackslash(buf, v)
+						}
+						buf = append(buf, '\'')
+					}
+				case string:
+					buf = append(buf, '\'')
+					if noBackslashEscapes {
+						buf = escapeStringQuotes(buf, v)
+					} else {
+						buf = escapeStringBackslash(buf, v)
+					}
+					buf = append(buf, '\'')
+				default:
+					return "", driver.ErrSkip
+				}
+
+				if len(buf)+4 > mc.maxAllowedPacket {
+					return "", driver.ErrSkip
+				}
+				lastIdx = i + 1
 			}
 		case RADICAL_BYTE:
 			if state == stateBacktick {
@@ -336,101 +416,6 @@ func findParamPositions(query string, noBackslashEscapes bool) []int {
 			}
 		}
 		lastChar = currentChar
-	}
-	return paramPositions
-}
-
-func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (string, error) {
-	noBackslashEscapes := (mc.status & statusNoBackslashEscapes) != 0
-	paramPositions := findParamPositions(query, noBackslashEscapes)
-	if len(paramPositions) != len(args) {
-		return "", driver.ErrSkip
-	}
-
-	buf, err := mc.buf.takeCompleteBuffer()
-	if err != nil {
-		// can not take the buffer. Something must be wrong with the connection
-		mc.cleanup()
-		// interpolateParams would be called before sending any query.
-		// So its safe to retry.
-		return "", driver.ErrBadConn
-	}
-	buf = buf[:0]
-	argPos := 0
-	lastIdx := 0
-
-	for _, qmIdx := range paramPositions {
-		buf = append(buf, query[lastIdx:qmIdx]...)
-		arg := args[argPos]
-		argPos++
-
-		if arg == nil {
-			buf = append(buf, "NULL"...)
-			lastIdx = qmIdx + 1
-			continue
-		}
-
-		switch v := arg.(type) {
-		case int64:
-			buf = strconv.AppendInt(buf, v, 10)
-		case uint64:
-			// Handle uint64 explicitly because our custom ConvertValue emits unsigned values
-			buf = strconv.AppendUint(buf, v, 10)
-		case float64:
-			buf = strconv.AppendFloat(buf, v, 'g', -1, 64)
-		case bool:
-			if v {
-				buf = append(buf, '1')
-			} else {
-				buf = append(buf, '0')
-			}
-		case time.Time:
-			if v.IsZero() {
-				buf = append(buf, "'0000-00-00'"...)
-			} else {
-				buf = append(buf, '\'')
-				buf, err = appendDateTime(buf, v.In(mc.cfg.Loc), mc.cfg.timeTruncate)
-				if err != nil {
-					return "", err
-				}
-				buf = append(buf, '\'')
-			}
-		case json.RawMessage:
-			buf = append(buf, '\'')
-			if noBackslashEscapes {
-				buf = escapeBytesQuotes(buf, v)
-			} else {
-				buf = escapeBytesBackslash(buf, v)
-			}
-			buf = append(buf, '\'')
-		case []byte:
-			if v == nil {
-				buf = append(buf, "NULL"...)
-			} else {
-				buf = append(buf, "_binary'"...)
-				if noBackslashEscapes {
-					buf = escapeBytesQuotes(buf, v)
-				} else {
-					buf = escapeBytesBackslash(buf, v)
-				}
-				buf = append(buf, '\'')
-			}
-		case string:
-			buf = append(buf, '\'')
-			if noBackslashEscapes {
-				buf = escapeStringQuotes(buf, v)
-			} else {
-				buf = escapeStringBackslash(buf, v)
-			}
-			buf = append(buf, '\'')
-		default:
-			return "", driver.ErrSkip
-		}
-
-		if len(buf)+4 > mc.maxAllowedPacket {
-			return "", driver.ErrSkip
-		}
-		lastIdx = qmIdx + 1
 	}
 	buf = append(buf, query[lastIdx:]...)
 	if argPos != len(args) {
