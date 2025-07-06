@@ -625,15 +625,27 @@ func reserveBuffer(buf []byte, appendSize int) []byte {
 	return buf[:newSize]
 }
 
-// escapeBytesBackslash escapes []byte with backslashes (\)
-// This escapes the contents of a string (provided as []byte) by adding backslashes before special
-// characters, and turning others into specific escape sequences, such as
-// turning newlines into \n and null bytes into \0.
+// escapeBytesBackslash appends _binary'...' or '...' with backslash escaping for bytes.
 // https://github.com/mysql/mysql-server/blob/mysql-5.7.5/mysys/charset.c#L823-L932
-func escapeBytesBackslash(buf, v []byte) []byte {
+func escapeBytesBackslash(buf, v []byte, binary bool) []byte {
 	pos := len(buf)
-	buf = reserveBuffer(buf, len(v)*2)
+	if binary {
+		buf = reserveBuffer(buf, len(v)*2+9)
+		buf[pos] = '_'
+		buf[pos+1] = 'b'
+		buf[pos+2] = 'i'
+		buf[pos+3] = 'n'
+		buf[pos+4] = 'a'
+		buf[pos+5] = 'r'
+		buf[pos+6] = 'y'
+		buf[pos+7] = '\''
+		pos += 8
 
+	} else {
+		buf = reserveBuffer(buf, len(v)*2+2)
+		buf[pos] = '\''
+		pos++
+	}
 	for _, c := range v {
 		switch c {
 		case '\x00':
@@ -669,15 +681,17 @@ func escapeBytesBackslash(buf, v []byte) []byte {
 			pos++
 		}
 	}
-
+	buf[pos] = '\''
+	pos++
 	return buf[:pos]
 }
 
 // escapeStringBackslash is similar to escapeBytesBackslash but for string.
 func escapeStringBackslash(buf []byte, v string) []byte {
 	pos := len(buf)
-	buf = reserveBuffer(buf, len(v)*2)
-
+	buf = reserveBuffer(buf, len(v)*2+2)
+	buf[pos] = '\''
+	pos++
 	for i := range len(v) {
 		c := v[i]
 		switch c {
@@ -714,19 +728,32 @@ func escapeStringBackslash(buf []byte, v string) []byte {
 			pos++
 		}
 	}
-
+	buf[pos] = '\''
+	pos++
 	return buf[:pos]
 }
 
-// escapeBytesQuotes escapes apostrophes in []byte by doubling them up.
-// This escapes the contents of a string by doubling up any apostrophes that
-// it contains. This is used when the NO_BACKSLASH_ESCAPES SQL_MODE is in
-// effect on the server.
+// escapeBytesQuotes appends _binary'...' or '...' with single-quote escaping for bytes.
+// This is used when the NO_BACKSLASH_ESCAPES SQL_MODE is in effect on the server.
 // https://github.com/mysql/mysql-server/blob/mysql-5.7.5/mysys/charset.c#L963-L1038
-func escapeBytesQuotes(buf, v []byte) []byte {
+func escapeBytesQuotes(buf, v []byte, binary bool) []byte {
 	pos := len(buf)
-	buf = reserveBuffer(buf, len(v)*2)
-
+	if binary {
+		buf = reserveBuffer(buf, len(v)*2+9)
+		buf[pos] = '_'
+		buf[pos+1] = 'b'
+		buf[pos+2] = 'i'
+		buf[pos+3] = 'n'
+		buf[pos+4] = 'a'
+		buf[pos+5] = 'r'
+		buf[pos+6] = 'y'
+		buf[pos+7] = '\''
+		pos += 8
+	} else {
+		buf = reserveBuffer(buf, len(v)*2+2)
+		buf[pos] = '\''
+		pos++
+	}
 	for _, c := range v {
 		if c == '\'' {
 			buf[pos+1] = '\''
@@ -737,15 +764,17 @@ func escapeBytesQuotes(buf, v []byte) []byte {
 			pos++
 		}
 	}
-
+	buf[pos] = '\''
+	pos++
 	return buf[:pos]
 }
 
 // escapeStringQuotes is similar to escapeBytesQuotes but for string.
 func escapeStringQuotes(buf []byte, v string) []byte {
 	pos := len(buf)
-	buf = reserveBuffer(buf, len(v)*2)
-
+	buf = reserveBuffer(buf, len(v)*2+2)
+	buf[pos] = '\''
+	pos++
 	for i := range len(v) {
 		c := v[i]
 		if c == '\'' {
@@ -757,7 +786,8 @@ func escapeStringQuotes(buf []byte, v string) []byte {
 			pos++
 		}
 	}
-
+	buf[pos] = '\''
+	pos++
 	return buf[:pos]
 }
 

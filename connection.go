@@ -279,10 +279,10 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 	singleQuotes := false
 	lastChar := byte(0)
 	argPos := 0
-	lenq := len(query)
+	lenQuery := len(query)
 	lastIdx := 0
 
-	for i := 0; i < lenq; i++ {
+	for i := 0; i < lenQuery; i++ {
 		currentChar := query[i]
 		if state == stateEscape && !((currentChar == QUOTE_BYTE && singleQuotes) || (currentChar == DBL_QUOTE_BYTE && !singleQuotes)) {
 			state = stateString
@@ -372,33 +372,27 @@ func (mc *mysqlConn) interpolateParams(query string, args []driver.Value) (strin
 						buf = append(buf, '\'')
 					}
 				case json.RawMessage:
-					buf = append(buf, '\'')
 					if noBackslashEscapes {
-						buf = escapeBytesQuotes(buf, v)
+						buf = escapeBytesQuotes(buf, v, false)
 					} else {
-						buf = escapeBytesBackslash(buf, v)
+						buf = escapeBytesBackslash(buf, v, false)
 					}
-					buf = append(buf, '\'')
 				case []byte:
 					if v == nil {
 						buf = append(buf, "NULL"...)
 					} else {
-						buf = append(buf, "_binary'"...)
 						if noBackslashEscapes {
-							buf = escapeBytesQuotes(buf, v)
+							buf = escapeBytesQuotes(buf, v, true)
 						} else {
-							buf = escapeBytesBackslash(buf, v)
+							buf = escapeBytesBackslash(buf, v, true)
 						}
-						buf = append(buf, '\'')
 					}
 				case string:
-					buf = append(buf, '\'')
 					if noBackslashEscapes {
 						buf = escapeStringQuotes(buf, v)
 					} else {
 						buf = escapeStringBackslash(buf, v)
 					}
-					buf = append(buf, '\'')
 				default:
 					return "", driver.ErrSkip
 				}
