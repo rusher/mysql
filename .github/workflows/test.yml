@@ -34,32 +34,34 @@ jobs:
               '1.25',
               '1.24',
           ]
-          mysql = [
+          mysql_versions = [
               '9.0',
-              '8.4', # LTS
+              '8.4',  # LTS
               '8.0',
               '5.7',
-              'mariadb-11.4',   # LTS
-              'mariadb-11.2',
-              'mariadb-11.1',
-              'mariadb-10.11',  # LTS
-              'mariadb-10.6',   # LTS
-              'mariadb-10.5',   # LTS
           ]
+          mariadb_versions = [
+              '12.2',
+              '11.8',   # LTS
+              '11.4',   # LTS
+              '10.11',  # LTS
+              '10.6',   # LTS
+          ]
+          oses = ['ubuntu-latest', 'macos-latest', 'windows-latest']
 
           includes = []
-          # Go versions compatibility check
+          # OS x database matrix (pinned to latest Go)
+          for os_name in oses:
+              for v in mysql_versions:
+                  includes.append({'os': os_name, 'go': go[0], 'distribution': 'mysql', 'version': v})
+              for v in mariadb_versions:
+                  includes.append({'os': os_name, 'go': go[0], 'distribution': 'mariadb', 'version': v})
+
+          # Go versions compatibility check (ubuntu + latest MySQL)
           for v in go[1:]:
-              includes.append({'os': 'ubuntu-latest', 'go': v, 'mysql': mysql[0]})
+              includes.append({'os': 'ubuntu-latest', 'go': v, 'distribution': 'mysql', 'version': mysql_versions[0]})
 
-          matrix = {
-              # OS vs MySQL versions
-              'os': [ 'ubuntu-latest', 'macos-latest', 'windows-latest' ],
-              'go': [ go[0] ],
-              'mysql': mysql,
-
-              'include': includes
-          }
+          matrix = {'include': includes}
           output = json.dumps(matrix, separators=(',', ':'))
           with open(os.environ["GITHUB_OUTPUT"], 'a', encoding="utf-8") as f:
               print(f"matrix={output}", file=f)
@@ -77,7 +79,8 @@ jobs:
           go-version: ${{ matrix.go }}
       - uses: shogo82148/actions-setup-mysql@v1
         with:
-          mysql-version: ${{ matrix.mysql }}
+          distribution: ${{ matrix.distribution }}
+          mysql-version: ${{ matrix.version }}
           user: ${{ env.MYSQL_TEST_USER }}
           password: ${{ env.MYSQL_TEST_PASS }}
           my-cnf: |
@@ -104,7 +107,7 @@ jobs:
         uses: shogo82148/actions-goveralls@v1
         with:
           path-to-profile: coverage.out
-          flag-name: ${{ runner.os }}-Go-${{ matrix.go }}-DB-${{ matrix.mysql }}
+          flag-name: ${{ runner.os }}-Go-${{ matrix.go }}-${{ matrix.distribution }}-${{ matrix.version }}
           parallel: true
 
   # notifies that all test jobs are finished.
